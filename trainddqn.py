@@ -3,7 +3,7 @@ import argparse
 import os
 import shutil
 from random import random, randint, sample
-
+import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
@@ -30,36 +30,70 @@ def get_args():
     parser.add_argument("--log_path", type=str, default="tensorboard_ddqn")
     parser.add_argument("--saved_path", type=str, default="trained_models")
     parser.add_argument('--update_target_frequency', type=int, default=10000)
-
+    parser.add_argument("--log_path", type=str, default="tensorboard_ddqn")
+    parser.add_argument("--checkpoint_path",type=str,default="checkpointddqn.pth")
+    
     args = parser.parse_args()
     return args
 
+def save_checkpoint(main_model,target_model,optimizer,replay_memory,iter,opt,state):
+    checkpoint={
+        'main_model_state_dict':main_model.state_dict(),
+        'target_model_state_dict':target_model.state_dict(),
+        'optimizer_state_dict':optimizer.state_dict(),
+        'replay_memory':replay_memory,
+        "iter":iter,
+        "state":state,
+    }
+    torch.save(checkpoint,opt.checkpoint_path)
+    print(f'checkpoint saved at iteration {iter}')
+def load_checkpoint(opt,main_model,target_model,optimizer):
+    if os.path.isfile(opt.checkpoint_path):
+        checkpoint=torch.load(opt.checkpoint_path)
+        main_model.load_state_dict(checkpoint['main_model_state_dict'])
+        target_model.load_state_dict(checkpoint['target_model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        replay_memory=checkpoint['replay_memory']
+        iter=checkpoint['iter']
+        state=checkpoint['state']
+        print(f'checkpoint loaded from iteration {iter}')
+        return main_model,target_model,optimizer,replay_memory,iter,state
+    else:
+        print("No checkpoint found")
+        return main_model,target_model,optimizer,[],0,None
 
 def train(opt):
+    losses=[]
+    rewards=[]
+    Q_values=[]
     if torch.cuda.is_available():
         torch.cuda.manual_seed(123)
     else:
         torch.manual_seed(123)
     model = DeepQNetwork().to(device)
     target_model=DeepQNetwork().to(device)
-    target_model.load_state_dict(model.state_dict())
+    # target_model.load_state_dict(model.state_dict())
     if os.path.isdir(opt.log_path):
         shutil.rmtree(opt.log_path) #xóa các mục con và thư mục con trong tệp nếu thư mục có tồn tại
     os.makedirs(opt.log_path)
     writer = SummaryWriter(opt.log_path)
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     criterion = nn.MSELoss()
-    game_state = FlappyBird()
-    image, reward, terminal = game_state.next_frame(0)
-    image = pre_processing(image[:game_state.screen_width, :int(game_state.base_y)], opt.image_size, opt.image_size)
-    image = torch.from_numpy(image)
-    if torch.cuda.is_available():
-        model.to(device)
-        image = image.to(device)
-    state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
+    # load checkpoint if exists
+    model,target_model,optimizer,replay_memory,start_iter,state=load_checkpoint(opt,model,target_model,optimizer)
+    if state is None:
+        game_state = FlappyBird()
+        image, reward, terminal = game_state.next_frame(0)
+        image = pre_processing(image[:game_state.screen_width, :int(game_state.base_y)], opt.image_size, opt.image_size)
+        image = torch.from_numpy(image)
+        if torch.cuda.is_available():
+            model.to(device)
+            image = image.to(device)
+        state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
 
-    replay_memory = []
-    iter = 0
+    # replay_memory = []
+    # iter = 0
+    iter=start_iter
     while iter < opt.num_iters:
         prediction = model(state)[0]
         # Exploration or exploitation
@@ -147,10 +181,21 @@ def train(opt):
         writer.add_scalar('Train/Epsilon', epsilon, iter)
         writer.add_scalar('Train/Reward', reward, iter)
         writer.add_scalar('Train/Q-value', torch.max(prediction), iter)
+        losses.append(loss.item())
+        rewards.append(reward)
+        Q_values.append(torch.max(prediction))
+        if (iter+1) %50000==0:
+            save_checkpoint(model,target_model,optimizer,replay_memory,iter,opt,state)
         if (iter+1) % 1000000 == 0:
             torch.save(model, "{}/flappy_bird_ddqn{}".format(opt.saved_path, iter+1))
     torch.save(model, "{}/flappy_bird_ddqn".format(opt.saved_path))
-
+    save_checkpoint(model,target_model,optimizer,replay_memory,iter,opt,state)
+    writer.close()
+    data={'loss':losses,
+          'reward':rewards,
+          'Q value':Q_values}
+    df=pd.DataFrame(data)
+    df.to_csv('trainddqn.csv')
 
 if __name__ == "__main__":
     opt = get_args()

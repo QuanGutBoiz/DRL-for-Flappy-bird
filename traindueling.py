@@ -3,6 +3,7 @@ import os
 import shutil
 from random import random, randint, sample
 
+import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,7 +25,7 @@ def get_args():
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--initial_epsilon", type=float, default=0.1)
     parser.add_argument("--final_epsilon", type=float, default=1e-4)
-    parser.add_argument("--num_iters", type=int, default=1000000)
+    parser.add_argument("--num_iters", type=int, default=500000)
     parser.add_argument("--replay_memory_size", type=int, default=50000,
                         help="Number of epoches between testing phases")
     parser.add_argument("--log_path", type=str, default="tensorboard_dueling")
@@ -34,7 +35,9 @@ def get_args():
     return args
 
 def train(opt):
-    
+    losses=[]
+    rewards=[]
+    Q_values=[]
     if torch.cuda.is_available():
         torch.cuda.manual_seed(123)
     else:
@@ -125,10 +128,18 @@ def train(opt):
         writer.add_scalar('Train/Epsilon', epsilon, iter)
         writer.add_scalar('Train/Reward', reward, iter)
         writer.add_scalar('Train/Q-value', torch.max(prediction), iter)
-        if (iter+1) % 1000000 == 0:
+        losses.append(loss.item())
+        rewards.append(reward)
+        Q_values.append(torch.max(prediction))
+        if (iter+1) % 200000 == 0:
             torch.save(model, "{}/flappy_bird_dueling{}".format(opt.saved_path, iter+1))
     torch.save(model, "{}/flappy_bird_dueling".format(opt.saved_path))
-
+    writer.close()
+    data={'loss':losses,
+          'reward':rewards,
+          'Q value':Q_values}
+    df=pd.DataFrame(data)
+    df.to_csv('traindueling.csv')
 if __name__ == "__main__":
     opt = get_args()
     train(opt)

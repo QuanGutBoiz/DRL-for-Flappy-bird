@@ -5,6 +5,7 @@ from random import random, randint
 import numpy as np
 import torch
 import torch.nn as nn
+import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
 from src.deep_q_network import DeepQNetwork  # assuming this is your DQN implementation
 from src.flappy_bird import FlappyBird  # assuming this is your Flappy Bird environment implementation
@@ -20,7 +21,7 @@ def get_args():
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--initial_epsilon", type=float, default=0.1)
     parser.add_argument("--final_epsilon", type=float, default=1e-4)
-    parser.add_argument("--num_iters", type=int, default=2000000)
+    parser.add_argument("--num_iters", type=int, default=500000)
     parser.add_argument("--replay_memory_size", type=int, default=50000)
     parser.add_argument("--log_path", type=str, default="tensorboard_prioritized")
     parser.add_argument("--saved_path", type=str, default="trained_models")
@@ -33,6 +34,9 @@ def get_args():
     return args
 
 def train(opt):
+    losses=[]
+    rewards=[]
+    Q_values=[]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DeepQNetwork().to(device)
     target_model = DeepQNetwork().to(device)
@@ -144,12 +148,19 @@ def train(opt):
             writer.add_scalar('Train/Epsilon', epsilon, iter)
             writer.add_scalar('Train/Reward', reward, iter)
             writer.add_scalar('Train/Q-value', prediction.max().item(), iter)
-        
+        losses.append(loss.item())
+        rewards.append(reward)
+        Q_values.append(torch.max(prediction))
         if (iter + 1) % 1000000 == 0:
             torch.save(model, "{}/flappy_bird_prio{}".format(opt.saved_path, iter + 1))
     
     torch.save(model, "{}/flappy_bird_prio".format(opt.saved_path))
-
+    writer.close()
+    data={'loss':losses,
+          'reward':rewards,
+          'Q value':Q_values}
+    df=pd.DataFrame(data)
+    df.to_csv('trainpri.csv')
 if __name__ == "__main__":
     opt = get_args()
     train(opt)
